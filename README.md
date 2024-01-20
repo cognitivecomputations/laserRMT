@@ -17,4 +17,4 @@ Marchenko-Pastur Law: The Marchenko-Pastur law is a pivotal concept from Random 
 Integration of Concepts: The integration of these two concepts enables a more refined approach to model optimization. Unlike brute-force methods, our technique uses the Marchenko-Pastur law to systematically identify and eliminate less important components in the model's layers. This results in a more efficient optimization process, potentially enhancing the model's performance and interpretability.
 
 ## Cite As
-Fernando Fernandes Neto and Eric Hartford. "Optimizing Large Language Models Using Layer-Selective Rank Reduction and Random Matrix Theory." 2024.
+Fernando Fernandes Neto, David Golchinfar and Eric Hartford. "Optimizing Large Language Models Using Layer-Selective Rank Reduction and Random Matrix Theory." 2024.

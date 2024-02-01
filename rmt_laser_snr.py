@@ -107,7 +107,7 @@ class ModelModifier:
                     print(f"No original weights saved for layer: {name}", flush=True)
         return
 
-    def calculate_model_perplexity(self, datasets=['wikitext2', 'ptb'], seqlen=128, use_cuda_graph=False, use_flash_attn=False):
+    def calculate_model_perplexity(self, datasets=['wikitext2', 'ptb'], seqlen=128):
         model = self.model
         model_str = self.model_name
         acc_loss = 0.0
@@ -118,9 +118,6 @@ class ModelModifier:
             nsamples = input_tok.numel() // seqlen
             input_tok = input_tok[0, :(seqlen * nsamples)].view(nsamples, seqlen)
             total_samples += nsamples
-
-            #if not use_cuda_graph:
-            #    model.reset()
 
             loss_fct = torch.nn.CrossEntropyLoss().cuda()
             progress = tqdm(range(nsamples))

@@ -1,0 +1,8 @@
+{
+    "files.associations": {
+        "*.csv": "plaintext",
+        ".env*": "dotenv",
+        "*.ttml": "xml",
+        "*.ttss": "css"
+    }
+}

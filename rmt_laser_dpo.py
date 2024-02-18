@@ -1,9 +1,7 @@
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from tqdm import tqdm
 import numpy as np
 import gc
-from icecream import ic
 
 from lib.utils.load_benchmark_dataset import get_benchmark_data
 
@@ -15,15 +13,12 @@ from src.AutoModelForSentenceEmbedding import (
     AutoModelForSentenceEmbedding,
     get_cosine_embeddings,
 )
-import time
-
 
 class ModelModifier:
     def __init__(
         self,
         model_name,
         prompt_template: PromptTemplate = PromptTemplate.chatml,
-        # TODO Infer input and output length from datasets
         input_length=512,
         output_length=512,
     ):
@@ -146,10 +141,10 @@ class ModelModifier:
             benchmark_dataset = get_benchmark_data(
                 dataset, n_samples, input_length, output_length
             )
-            ic("Calculating performance for dataset:", dataset)
+            print("Calculating performance for dataset:", dataset)
             for index, sample in enumerate(benchmark_dataset.data):
                 progress = str(f"{index}/{n_samples}")
-                ic(progress)
+                print(progress)
                 prompt = get_llm_prompt(sample.instruction, sample.prompt)
                 prompt_enc = tokenizer([prompt], return_tensors="pt")
                 prompt_enc.to("cuda")

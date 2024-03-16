@@ -2,9 +2,23 @@
 model_name = "Intel/neural-chat-7b-v3-3"  # Change to your preferred model
 #model_name = "cognitivecomputations/dolphin-2.6-mistral-7b-dpo"  # Change to your preferred model
 
-
 # %%
 import torch
+
+# Check for CUDA, then MPS, and fall back to CPU
+if torch.cuda.is_available():
+    device = torch.device("cuda")
+    data_type = torch.bfloat16
+elif torch.backends.mps.is_available():
+    device = torch.device("mps")
+    data_type = torch.float16
+else:
+    device = torch.device("cpu")
+    data_type = torch.float16  # Default to float16 for non-GPU devices for consistency
+
+
+print(f"Using device: {device}")
+
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import datasets
 from lib.utils import gptq_data_utils
@@ -15,7 +29,9 @@ import numpy as np
 class ModelModifier:
     def __init__(self, model_name):
         self.model_name = model_name
-        self.model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16, device_map={"":0})
+        self.model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=data_type)
+
+        self.model.to(device)
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.original_weights = {}
         self.modified_layers = set()
@@ -33,7 +49,14 @@ class ModelModifier:
                 print(f"Reconstructing layer: {name}")
                 original_dtype = module.weight.dtype
                 self.original_weights[name] = module.weight.detach().clone()
-                weights = module.weight.double()
+                is_cuda_available = torch.cuda.is_available()
+                if is_cuda_available:
+                # If CUDA is available, use double precision
+                    weights = module.weight.double()
+                else:
+                    # If CUDA is not available (e.g., using MPS), use single precision (float32)
+                    weights = module.weight.float()  # Convert to float32 for compatibility with MPS
+
                 U, S, V = torch.linalg.svd(weights, full_matrices=False)
 
                 # Estimate sigma using the full IQR method
@@ -100,10 +123,10 @@ class ModelModifier:
             #if not use_cuda_graph:
             #    model.reset()
 
-            loss_fct = torch.nn.CrossEntropyLoss().cuda()
+            loss_fct = torch.nn.CrossEntropyLoss().to(device)
             progress = tqdm(range(nsamples))
             for ii in progress:
-                input = input_tok[ii, :].cuda().view(1, -1)
+                input = input_tok[ii, :].to(device).view(1, -1)
                 output = model(input, use_cache=False, output_hidden_states=False, output_attentions=False)[0]
                 shift_logits = output[:, :-1, :].contiguous()
                 shift_labels = input[:, 1:]
@@ -195,5 +218,6 @@ loop_check, min_loss = modifier.search_optimal_layer_modification(layer_types=['
 
 # %%
 modifier.save_model("laser_model")
+
 
 

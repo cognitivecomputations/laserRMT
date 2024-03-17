@@ -1,3 +1,20 @@
+import logging
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+import datasets
+from lib.utils import gptq_data_utils
+from tqdm import tqdm
+import random
+import numpy as np
+
+# Setup logging
+logging.basicConfig(level=logging.INFO, 
+                    format='%(asctime)s - %(levelname)s - %(message)s',
+                    handlers=[
+                        logging.FileHandler("output.log", mode='a'), # Append mode
+                        logging.StreamHandler() # Console output
+                    ])
+
 # %%
 model_name = "DiscoResearch/DiscoLM_German_7b_v1"  # Change to your preferred model
 #model_name = "cognitivecomputations/dolphin-2.6-mistral-7b-dpo"  # Change to your preferred model
@@ -18,6 +35,7 @@ else:
 
 
 print(f"Using device: {device}")
+logging.info(f"Using device: {device}")
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import datasets
@@ -42,11 +60,13 @@ class ModelModifier:
         layer_id = f"{layer_type}_{layer_number}"
         if layer_id in self.modified_layers:
             print(f"Layer {layer_id} has already been modified. Skipping.")
+            logging.info(f"Layer {layer_id} has already been modified. Skipping.")
             return False
 
         for name, module in self.model.named_modules():
             if layer_type in name and str(layer_number) in name:
                 print(f"Reconstructing layer: {name}")
+                logging.info(f"Reconstructing layer: {name}")
                 original_dtype = module.weight.dtype
                 self.original_weights[name] = module.weight.detach().clone()
                 is_cuda_available = torch.cuda.is_available()
@@ -71,6 +91,7 @@ class ModelModifier:
                 k = (S > mp_threshold_full_iqr).sum().item()
                 S_reduced[:k] = S[:k]
                 print(f"Reduced from {S.shape} to {k}")
+                logging.info(f"Reduced from {S.shape} to {k}")
 
                 # Reconstruct the matrix using the thresholded singular values
                 reconstructed_weights = U @ torch.diag(S_reduced) @ V
@@ -103,10 +124,13 @@ class ModelModifier:
                 if name in self.original_weights:
                     module.weight = torch.nn.Parameter(self.original_weights[name])
                     print(f"Restored original weights for layer: {name}")
+                    logging.info(f"Restored original weights for layer: {name}")
                     if layer_id in self.modified_layers:
                         self.modified_layers.remove(layer_id)
                 else:
                     print(f"No original weights saved for layer: {name}")
+                    logging.info(f"No original weights saved for layer: {name}")
+                    
 
     def calculate_model_perplexity(self, datasets=['wikitext2', 'c4', 'ptb'], seqlen=384, use_cuda_graph=False, use_flash_attn=False):
         model = self.model
@@ -150,6 +174,10 @@ class ModelModifier:
         print("="*50)
         print(f"The initial perplexity of the model is {initial_perplexity}")
         print("="*50)
+        logging.info("="*50)
+        logging.info(f"The initial perplexity of the model is {initial_perplexity}")
+        logging.info("="*50)
+        
         min_loss = initial_perplexity
         optimal_params = (None, None)
         mods = 0
@@ -177,12 +205,17 @@ class ModelModifier:
                         print("*"*50)
                         print(f"Improved perplexity found: {min_loss} for layer {layer_type} {layer_number}. Total modifications is {mods}")
                         print("*"*50)
+  
+                        logging.info("*"*50)
+                        logging.info(f"Improved perplexity found: {min_loss} for layer {layer_type} {layer_number}. Total modifications is {mods}")
+                        logging.info("*"*50)                  
                     else:
                         self.restore_model_original_layer(layer_type, layer_number)
                         self.failed_attempts.add(attempt)  # Record the failed attempt
 
                 except NotImplementedError:
                     print("Perplexity calculation method is not implemented yet.")
+                    logging.info("Perplexity calculation method is not implemented yet.")
                     return False, min_loss
 
         return optimal_params, min_loss
@@ -209,6 +242,8 @@ modifier.restore_model_original_layer('mlp.down_proj', '25')
 layers = list(range(31, -1, -1))
 layers = [f".{l}." for l in layers]
 print(layers)
+logging.info("\nlayers:\n")
+logging.info(layers)
 
 # %%
 ## Search and modify all layers
@@ -217,6 +252,7 @@ loop_check, min_loss = modifier.search_optimal_layer_modification(layer_types=['
                                     layer_numbers=layers)
 
 # %%
+logging.info("saving...")
 modifier.save_model("laser_model", "/root")
 
 

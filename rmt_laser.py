@@ -280,4 +280,3 @@ loop_check, min_loss = modifier.search_optimal_layer_modification(layer_types=['
 logging.info("saving...")
 modifier.save_model("laser_model", "/root")
 
-

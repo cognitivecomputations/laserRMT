@@ -21,23 +21,7 @@ model_name = "DiscoResearch/DiscoLM_German_7b_v1"  # Change to your preferred mo
 
 # %%
 import torch
-
 import time
-
-# Check for CUDA, then MPS, and fall back to CPU
-if torch.cuda.is_available():
-    device = torch.device("cuda")
-    data_type = torch.bfloat16
-elif torch.backends.mps.is_available():
-    device = torch.device("mps")
-    data_type = torch.float16
-else:
-    device = torch.device("cpu")
-    data_type = torch.float16  # Default to float16 for non-GPU devices for consistency
-
-
-print(f"Using device: {device}")
-logging.info(f"Using device: {device}")
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import datasets
@@ -48,10 +32,21 @@ import numpy as np
 
 class ModelModifier:
     def __init__(self, model_name):
-        self.model_name = model_name
-        self.model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=data_type)
+        # Determine the device as part of the class initialization
+        if torch.cuda.is_available():
+            self.device = torch.device("cuda")
+            self.data_type = torch.bfloat16
+        elif torch.backends.mps.is_available():
+            self.device = torch.device("mps")
+            self.data_type = torch.float16
+        else:
+            self.device = torch.device("cpu")
+            self.data_type = torch.float16  # Default to float16 for non-GPU devices for consistency
 
-        self.model.to(device)
+        logging.info(f"Using device: {self.device}")
+        
+        self.model_name = model_name
+        self.model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=self.data_type).to(self.device)
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.original_weights = {}
         self.modified_layers = set()
@@ -279,4 +274,5 @@ loop_check, min_loss = modifier.search_optimal_layer_modification(layer_types=['
 # %%
 logging.info("saving...")
 modifier.save_model("laser_model", "/root")
+
 

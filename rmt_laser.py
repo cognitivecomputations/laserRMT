@@ -22,6 +22,8 @@ model_name = "DiscoResearch/DiscoLM_German_7b_v1"  # Change to your preferred mo
 # %%
 import torch
 
+import time
+
 # Check for CUDA, then MPS, and fall back to CPU
 if torch.cuda.is_available():
     device = torch.device("cuda")
@@ -133,34 +135,43 @@ class ModelModifier:
                     
 
     def calculate_model_perplexity(self, datasets=['wikitext2', 'c4', 'ptb'], seqlen=384, use_cuda_graph=False, use_flash_attn=False):
-        model = self.model
-        model_str = self.model_name
-        acc_loss = 0.0
-        total_samples = 0
+      start_time = time.time()
+    
+      model = self.model
+      acc_loss = 0.0
+      total_samples = 0
 
-        for dataset in datasets:
-            input_tok = gptq_data_utils.get_test_tokens(dataset, seed=0, seqlen=seqlen, model=model_str)
-            nsamples = input_tok.numel() // seqlen
-            input_tok = input_tok[0, :(seqlen * nsamples)].view(nsamples, seqlen)
-            total_samples += nsamples
+      for dataset in datasets:
+        dataset_start_time = time.time()
+        input_tok = gptq_data_utils.get_test_tokens(dataset, seed=0, seqlen=seqlen, model=self.model_name)
+        nsamples = input_tok.numel() // seqlen
+        input_tok = input_tok[0, :(seqlen * nsamples)].view(nsamples, seqlen)
+        total_samples += nsamples
 
-            #if not use_cuda_graph:
-            #    model.reset()
+        logging.info(f"Processing dataset {dataset}. Total samples: {nsamples}")
 
-            loss_fct = torch.nn.CrossEntropyLoss().to(device)
-            progress = tqdm(range(nsamples))
-            for ii in progress:
-                input = input_tok[ii, :].to(device).view(1, -1)
-                output = model(input, use_cache=False, output_hidden_states=False, output_attentions=False)[0]
-                shift_logits = output[:, :-1, :].contiguous()
-                shift_labels = input[:, 1:]
-                loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
-                acc_loss += loss.item()
-                progress.set_description(f"avg_loss = {acc_loss/(ii+1)}")
+        loss_fct = torch.nn.CrossEntropyLoss().to(self.device)
+        progress = tqdm(range(nsamples), desc=f"Processing {dataset}")
 
-        avg_loss = acc_loss / total_samples
-        ppl = torch.exp(torch.tensor(avg_loss)).item()
-        return ppl
+        for ii in progress:
+            input = input_tok[ii, :].to(self.device).view(1, -1)
+            output = model(input, use_cache=False, output_hidden_states=False, output_attentions=False)[0]
+            shift_logits = output[:, :-1, :].contiguous()
+            shift_labels = input[:, 1:]
+            loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+            acc_loss += loss.item()
+            progress.set_description(f"avg_loss = {acc_loss / (ii + 1)}")
+
+        dataset_elapsed = time.time() - dataset_start_time
+        logging.info(f"Completed processing dataset {dataset} in {dataset_elapsed:.2f} seconds.")
+
+      avg_loss = acc_loss / total_samples
+      ppl = torch.exp(torch.tensor(avg_loss)).item()
+
+      total_elapsed = time.time() - start_time
+      logging.info(f"Completed perplexity calculation for all datasets in {total_elapsed:.2f} seconds. Total samples processed: {total_samples}. Perplexity: {ppl}")
+
+      return ppl
     
     ### Implement a Backward Search
     # Search for the optimal lower ranking approximations from the top layers downwards
@@ -169,6 +180,9 @@ class ModelModifier:
     ######################################################################################
 
     def search_optimal_layer_modification(self, layer_types, layer_numbers, max_mod=5):
+        start_time = time.time()  # Start time of the operation
+        total_operations = len(layer_types) * len(layer_numbers)
+        operations_completed = 0
         # Calculate initial perplexity with original model weights
         initial_perplexity = self.calculate_model_perplexity()
         print("="*50)
@@ -177,6 +191,8 @@ class ModelModifier:
         logging.info("="*50)
         logging.info(f"The initial perplexity of the model is {initial_perplexity}")
         logging.info("="*50)
+        logging.info(f"Starting optimization over {total_operations} potential modifications.")
+
         
         min_loss = initial_perplexity
         optimal_params = (None, None)
@@ -184,7 +200,15 @@ class ModelModifier:
 
         for layer_number in layer_numbers:
             for layer_type in layer_types:
-                if mods >= max_mod and max_mod != -1:
+              operations_completed += 1
+              current_time = time.time()
+              elapsed_time = current_time - start_time
+              estimated_total_time = (elapsed_time / operations_completed) * total_operations
+              remaining_time = estimated_total_time - elapsed_time
+
+              logging.info(f"Optimizing layer {layer_type} {layer_number}. Progress: {operations_completed}/{total_operations}. Estimated time remaining: {remaining_time:.2f} seconds.")
+ 
+              if mods >= max_mod and max_mod != -1:
                     return optimal_params, min_loss
                 attempt = (layer_type, layer_number)
                 if attempt in self.failed_attempts:
@@ -218,6 +242,7 @@ class ModelModifier:
                     logging.info("Perplexity calculation method is not implemented yet.")
                     return False, min_loss
 
+        logging.info("Optimization complete. Final model evaluation in progress.")
         return optimal_params, min_loss
 
     def save_model(self, save_dir):

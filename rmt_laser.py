@@ -1,5 +1,5 @@
 # %%
-model_name = "Intel/neural-chat-7b-v3-3"  # Change to your preferred model
+model_name = "DiscoResearch/DiscoLM_German_7b_v1"  # Change to your preferred model
 #model_name = "cognitivecomputations/dolphin-2.6-mistral-7b-dpo"  # Change to your preferred model
 
 # %%
@@ -217,7 +217,7 @@ loop_check, min_loss = modifier.search_optimal_layer_modification(layer_types=['
                                     layer_numbers=layers)
 
 # %%
-modifier.save_model("laser_model")
+modifier.save_model("laser_model", "/root")
 
 
 

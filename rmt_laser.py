@@ -200,15 +200,15 @@ class ModelModifier:
 
         for layer_number in layer_numbers:
             for layer_type in layer_types:
-              operations_completed += 1
-              current_time = time.time()
-              elapsed_time = current_time - start_time
-              estimated_total_time = (elapsed_time / operations_completed) * total_operations
-              remaining_time = estimated_total_time - elapsed_time
+                operations_completed += 1
+                current_time = time.time()
+                elapsed_time = current_time - start_time
+                estimated_total_time = (elapsed_time / operations_completed) * total_operations
+                remaining_time = estimated_total_time - elapsed_time
 
-              logging.info(f"Optimizing layer {layer_type} {layer_number}. Progress: {operations_completed}/{total_operations}. Estimated time remaining: {remaining_time:.2f} seconds.")
+                logging.info(f"Optimizing layer {layer_type} {layer_number}. Progress: {operations_completed}/{total_operations}. Estimated time remaining: {remaining_time:.2f} seconds.")
  
-              if mods >= max_mod and max_mod != -1:
+                if mods >= max_mod and max_mod != -1:
                     return optimal_params, min_loss
                 attempt = (layer_type, layer_number)
                 if attempt in self.failed_attempts:
@@ -279,6 +279,5 @@ loop_check, min_loss = modifier.search_optimal_layer_modification(layer_types=['
 # %%
 logging.info("saving...")
 modifier.save_model("laser_model", "/root")
-
 
 

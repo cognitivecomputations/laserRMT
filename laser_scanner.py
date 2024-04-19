@@ -3,15 +3,12 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 import numpy as np
 import gc
 import json
-from accelerate import Accelerator
 from prompt_toolkit.shortcuts import checkboxlist_dialog
 
 class ModelModifier:
     def __init__(self, model_name):
-        self.accelerator = Accelerator()
         self.model_name = model_name
-        self.model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16)
-        self.model = self.accelerator.prepare(self.model)  # Prepare the model for multi-GPU
+        self.model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16, device_map="auto")
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True, add_prefix_space=True)
         self.layer_snr = {}
 
@@ -37,7 +34,6 @@ class ModelModifier:
         layers = [(name, module) for name, module in self.model.named_modules() if layer_type in name and hasattr(module, 'weight')]
         for i in range(0, len(layers), batch_size):
             batch_layers = layers[i:i + batch_size]
-            self.accelerator.wait_for_everyone()  # Ensure all processes are synchronized before processing
             for name, module in batch_layers:
                 weights = module.weight.detach().double()
                 S = torch.linalg.svdvals(weights)
@@ -53,12 +49,10 @@ class ModelModifier:
                 print(f"Calculated SNR for {name}: {snr_ratio}")
                 del S, weights
                 gc.collect()
-            self.accelerator.wait_for_everyone()  # Synchronize after batch completion
 
     def determine_batch_size(self):
-        # This should be dynamically calculated based on available GPU memory across devices
-        total_memory = torch.cuda.get_device_properties(self.accelerator.device).total_memory
-        free_memory = total_memory - torch.cuda.memory_reserved(self.accelerator.device)
+        total_memory = torch.cuda.get_device_properties(0).total_memory
+        free_memory = total_memory - torch.cuda.memory_reserved(0)
         estimated_memory_per_layer = 512 * 1024 * 1024  # Estimate 512 MB per layer
         return max(1, int(free_memory / estimated_memory_per_layer))
 
@@ -87,7 +81,7 @@ class ModelModifier:
             print(f"Results saved to {filename}")
 
 # Usage
-model_name = "mistral-community/Mistral-7B-v0.2"
+model_name = "NousResearch/Meta-Llama-3-70B"
 modifier = ModelModifier(model_name)
 selected_weight_types = modifier.interactive_select_weights()
 if selected_weight_types:

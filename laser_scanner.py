@@ -30,10 +30,15 @@ class ModelModifier:
         return selected_types
 
     def calculate_snr_for_layer(self, layer_type):
-        batch_size = self.determine_batch_size()
+        batch_size = self.determine_batch_size(layer_type)
         layers = [(name, module) for name, module in self.model.named_modules() if layer_type in name and hasattr(module, 'weight')]
-        for i in range(0, len(layers), batch_size):
-            batch_layers = layers[i:i + batch_size]
+        num_batches = (len(layers) + batch_size - 1) // batch_size
+
+        for i in range(num_batches):
+            start_idx = i * batch_size
+            end_idx = min(start_idx + batch_size, len(layers))
+            batch_layers = layers[start_idx:end_idx]
+
             for name, module in batch_layers:
                 weights = module.weight.detach().double()
                 S = torch.linalg.svdvals(weights)
@@ -47,14 +52,36 @@ class ModelModifier:
                 snr_ratio = snr / max_singular_value
                 self.layer_snr[name] = snr_ratio
                 print(f"Calculated SNR for {name}: {snr_ratio}")
-                del S, weights
-                gc.collect()
 
-    def determine_batch_size(self):
-        total_memory = torch.cuda.get_device_properties(0).total_memory
-        free_memory = total_memory - torch.cuda.memory_reserved(0)
-        estimated_memory_per_layer = 512 * 1024 * 1024  # Estimate 512 MB per layer
-        return max(1, int(free_memory / estimated_memory_per_layer))
+            del S, weights
+            gc.collect()
+            torch.cuda.empty_cache()
+
+    def determine_batch_size(self, layer_type):
+        max_batch_size = len([(name, module) for name, module in self.model.named_modules() if layer_type in name and hasattr(module, 'weight')])
+        batch_size = max_batch_size
+
+        while True:
+            try:
+                layers = [(name, module) for name, module in self.model.named_modules() if layer_type in name and hasattr(module, 'weight')]
+                batch_layers = layers[:batch_size]
+
+                for name, module in batch_layers:
+                    weights = module.weight.detach().double()
+                    S = torch.linalg.svdvals(weights)
+                    del S, weights
+
+                gc.collect()
+                torch.cuda.empty_cache()
+                return batch_size
+
+            except RuntimeError as e:
+                if 'out of memory' in str(e):
+                    batch_size //= 2
+                    if batch_size == 0:
+                        raise RuntimeError("Batch size cannot be further reduced. Insufficient VRAM.")
+                else:
+                    raise e
 
     @staticmethod
     def marchenko_pastur_threshold(sigma, n, m):
@@ -85,6 +112,7 @@ class ModelModifier:
 model_name = "01-ai/Yi-34B-200K"
 modifier = ModelModifier(model_name)
 selected_weight_types = modifier.interactive_select_weights()
+
 if selected_weight_types:
     modifier.assess_layers_snr(selected_weight_types)
     modifier.save_snr_to_json()

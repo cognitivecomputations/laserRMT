@@ -1,14 +1,18 @@
+from accelerate import Accelerator
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import numpy as np
-import gc
 import json
+import gc
 from prompt_toolkit.shortcuts import checkboxlist_dialog
 
 class ModelModifier:
     def __init__(self, model_name):
+        self.accelerator = Accelerator()  # Initialize Accelerator
         self.model_name = model_name
-        self.model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16, device_map="auto")
+        # Use float32 for higher precision computations as default and enable automatic device mapping
+        self.model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.float32, device_map="auto")
+        self.model, self.optimizer = self.accelerator.prepare(self.model, torch.optim.Adam(self.model.parameters()))
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True, add_prefix_space=True)
         self.layer_snr = {}
 
@@ -35,14 +39,14 @@ class ModelModifier:
         for i in range(0, len(layers), batch_size):
             batch_layers = layers[i:i + batch_size]
             for name, module in batch_layers:
-                weights = module.weight.detach().double()
+                weights = module.weight.detach().double()  # Convert to double for precision in calculations
                 S = torch.linalg.svdvals(weights)
                 max_singular_value = S[0].item()
                 sigma_estimated = self.estimate_sigma_with_full_iqr(S)
                 n, m = weights.shape
                 mp_threshold = self.marchenko_pastur_threshold(sigma_estimated, n, m)
-                signal = S[S > mp_threshold].sum()
-                noise = S[S <= mp_threshold].sum()
+                signal = S[S > mp_threshold].sum().item()
+                noise = S[S <= mp_threshold].sum().item()
                 snr = signal / noise if noise != 0 else float('inf')
                 snr_ratio = snr / max_singular_value
                 self.layer_snr[name] = snr_ratio
@@ -59,7 +63,7 @@ class ModelModifier:
     @staticmethod
     def marchenko_pastur_threshold(sigma, n, m):
         beta = n / m if n < m else m / n
-        threshold = sigma * np.sqrt((1 + np.sqrt(beta))**2)
+        threshold = sigma * np.sqrt((1 + np.sqrt(beta)) ** 2)
         return threshold
 
     @staticmethod
@@ -77,13 +81,14 @@ class ModelModifier:
     def save_snr_to_json(self):
         filename = f"snr_results_{self.model_name.split('/')[-1]}.json"
         with open(filename, 'w') as file:
-            json.dump(self.layer_snr, file, indent=4)
-            print(f"Results saved to {filename}")
+            json.dump({k: float(v) for k, v in self.layer_snr.items()}, file, indent=4)
+        print(f"Results saved to {filename}")
 
 # Usage
-model_name = "NousResearch/Meta-Llama-3-70B"
+model_name = "meta-llama/Meta-Llama-3-8B"  # Update with the appropriate model path
 modifier = ModelModifier(model_name)
 selected_weight_types = modifier.interactive_select_weights()
+
 if selected_weight_types:
     modifier.assess_layers_snr(selected_weight_types)
     modifier.save_snr_to_json()

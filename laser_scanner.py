@@ -2,15 +2,17 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import numpy as np
 import json
-from prompt_toolkit.shortcuts import checkboxlist_dialog
+from prompt_toolkit.shortcuts import checkboxlist_dialog, input_dialog
 import argparse
 from tqdm import tqdm
 import os
+import time
 
 class ModelModifier:
-    def __init__(self, model_name=None, top_percent=50):
+    def __init__(self, model_name=None, top_percent=50, batch_size=1):
         self.model_name = model_name
         self.top_percent = top_percent
+        self.batch_size = batch_size
 
         if model_name:
             self.model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.float32, low_cpu_mem_usage=True, trust_remote_code=True, device_map="auto")
@@ -57,29 +59,25 @@ class ModelModifier:
 
     def calculate_snr_for_layer(self, layer_type):
         layers = [(name, module) for name, module in self.model.named_modules() if layer_type in name and hasattr(module, 'weight')]
-        num_batches = (len(layers) + 2) // 3
+        num_batches = (len(layers) + self.batch_size - 1) // self.batch_size
 
         with tqdm(total=num_batches, unit='batch', desc=f'Calculating SNR for {layer_type}') as progress_bar:
-            for i in range(0, len(layers), 3):
-                batch_layers = layers[i:i + 3]
+            for i in range(0, len(layers), self.batch_size):
+                batch_layers = layers[i:i + self.batch_size]
                 for name, module in batch_layers:
-                    weights = module.weight.detach() 
+                    weights = module.weight.detach()
                     if weights.ndim < 2:
                         weights = weights.unsqueeze(0)
-                    if weights.is_meta:
-                        weights = weights.to(torch.float32) 
                     S = torch.linalg.svdvals(weights)
-                    if S.is_meta:
-                        S = S.to(torch.float32)
-                    max_singular_value = S[0].item()
+                    max_singular_value = S[0]
                     sigma_estimated = self.estimate_sigma_with_full_iqr(S)
                     n, m = weights.shape[-2:]
                     mp_threshold = self.marchenko_pastur_threshold(sigma_estimated, n, m)
-                    signal = S[S > mp_threshold].sum().item()
-                    noise = S[S <= mp_threshold].sum().item()
+                    signal = S[S > mp_threshold].sum()
+                    noise = S[S <= mp_threshold].sum()
                     snr = signal / noise if noise != 0 else float('inf')
                     snr_ratio = snr / max_singular_value
-                    self.layer_snr[name] = {'type': layer_type, 'snr': snr_ratio}
+                    self.layer_snr[name] = {'type': layer_type, 'snr': snr_ratio.item()}
                 progress_bar.update(1)
 
     @staticmethod
@@ -97,11 +95,17 @@ class ModelModifier:
         return sigma_estimated
 
     def assess_layers_snr(self, selected_weight_types):
-        # Assess SNR for all selected layer types
+        total_layers = sum(1 for name, module in self.model.named_modules() if any(layer_type in name for layer_type in selected_weight_types) and hasattr(module, 'weight'))
+        start_time = time.time()
+
         with tqdm(total=len(selected_weight_types), unit='type', desc='Calculating SNR for types') as progress_bar:
             for layer_type in selected_weight_types:
                 self.calculate_snr_for_layer(layer_type)
                 progress_bar.update(1)
+
+        end_time = time.time()
+        total_time = end_time - start_time
+        print(f"Total time taken: {total_time:.2f} seconds")
 
     def save_snr_to_json(self):
         filename = f"snr_results_{self.model_name.split('/')[-1]}.json" if self.model_name else "snr_results.json"
@@ -172,8 +176,10 @@ if args.json:
     modifier = ModelModifier(top_percent=args.top_percent)
     modifier.generate_unfrozen_params_yaml(args.json, args.top_percent)
 else:
-    model_name = "Qwen/Qwen1.5-1.8B"
-    modifier = ModelModifier(model_name=model_name)
+    model_name = "meta-llama/Meta-Llama-3-8B-Instruct"
+    batch_size = input_dialog(title="Batch Size", text="Enter the batch size:").run()
+    batch_size = int(batch_size) if batch_size else 1
+    modifier = ModelModifier(model_name=model_name, batch_size=batch_size)
     selected_weight_types = modifier.interactive_select_weights()
     if selected_weight_types:
         modifier.assess_layers_snr(selected_weight_types)
